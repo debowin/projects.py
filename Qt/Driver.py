@@ -9,6 +9,15 @@
 
 __author__ = 'debowin'
 
+"""
+Issues & Features:
+1) Provide mechanism to download files in different mimetypes in tree and list views.(DblClick)
+2) Tried dynamic search results fetch while typing.(too slow)
+3) On Enter key press inside Search Box, the results should be updated.
+4) Add support for multiple file uploads in a queue fashion.
+"""
+
+
 from PyQt4 import QtCore, QtGui
 import httplib2
 import mimetypes
@@ -20,6 +29,7 @@ import pprint
 from apiclient.discovery import build
 from apiclient.http import MediaFileUpload
 from oauth2client.client import FlowExchangeError
+from apiclient import errors
 from oauth2client.client import OAuth2WebServerFlow
 from oauth2client.file import Storage
 
@@ -58,7 +68,8 @@ class Ui_Form(QtGui.QWidget):
         self.generateAuthData()
         if self.credentials != None:
             self.createService()
-        self.fetchList()
+            self.fetchList()
+            self.searchFullText()
 
     def setupUi(self, Form):
         Form.setObjectName(_fromUtf8("Form"))
@@ -112,14 +123,17 @@ class Ui_Form(QtGui.QWidget):
         self.pbBrowse.setObjectName(_fromUtf8("pbBrowse"))
         self.horizontalLayout_2.addWidget(self.pbBrowse)
         self.verticalLayout_5.addLayout(self.horizontalLayout_2)
+        self.label_4 = QtGui.QLabel(self.groupBox)
+        self.label_4.setObjectName(_fromUtf8("label_4"))
+        self.verticalLayout_5.addWidget(self.label_4)
+        self.leFileName = QtGui.QLineEdit(self.groupBox)
+        self.leFileName.setObjectName(_fromUtf8("leFileName"))
+        self.verticalLayout_5.addWidget(self.leFileName)
         self.label_2 = QtGui.QLabel(self.groupBox)
         self.label_2.setObjectName(_fromUtf8("label_2"))
         self.verticalLayout_5.addWidget(self.label_2)
         self.pteDesc = QtGui.QPlainTextEdit(self.groupBox)
         self.pteDesc.setFrameShadow(QtGui.QFrame.Sunken)
-        self.pteDesc.setTabChangesFocus(True)
-        self.pteDesc.setOverwriteMode(False)
-        self.pteDesc.setBackgroundVisible(False)
         self.pteDesc.setObjectName(_fromUtf8("pteDesc"))
         self.verticalLayout_5.addWidget(self.pteDesc)
         self.pbUpload = QtGui.QPushButton(self.groupBox)
@@ -152,9 +166,9 @@ class Ui_Form(QtGui.QWidget):
         self.pbSearch.setObjectName(_fromUtf8("pbSearch"))
         self.horizontalLayout.addWidget(self.pbSearch)
         self.verticalLayout_6.addLayout(self.horizontalLayout)
-        self.treeResults = QtGui.QTreeWidget(self.searchFile)
-        self.treeResults.setObjectName(_fromUtf8("treeResults"))
-        self.verticalLayout_6.addWidget(self.treeResults)
+        self.listResults = QtGui.QListWidget(self.searchFile)
+        self.listResults.setObjectName(_fromUtf8("listResults"))
+        self.verticalLayout_6.addWidget(self.listResults)
         self.tabWidget.addTab(self.searchFile, _fromUtf8(""))
         self.verticalLayout_2.addWidget(self.tabWidget)
 
@@ -172,23 +186,32 @@ class Ui_Form(QtGui.QWidget):
         self.pbAuth.setText(_translate("Form", "Authenticate Application", None))
         self.label_3.setText(_translate("Form", "Select a file to upload to your Drive:", None))
         self.pbBrowse.setText(_translate("Form", "Browse", None))
-        self.label_2.setText(_translate("Form", "Enter a description: (Leave blank for default)", None))
+        self.label_4.setText(_translate("Form","Enter a Filename: (Leave blank for default)", None))
+        self.label_2.setText(_translate("Form", "Enter a Description: (Leave blank for default)", None))
         self.pbUpload.setText(_translate("Form", "Upload", None))
+        self.leUpload.setReadOnly(True)
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.upload), _translate("Form", "Upload", None))
         self.treeFiles.headerItem().setText(0, _translate("Form", "Files in User\'s Drive", None))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.listAll), _translate("Form", "List All", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.listAll), _translate("Form", "List Contents", None))
         self.leSearch.setPlaceholderText(_translate("Form", "Search Query", None))
         self.pbSearch.setText(_translate("Form", "Search", None))
-        self.treeResults.headerItem().setText(0, _translate("Form", "Matching Files", None))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.searchFile), _translate("Form", "Search File", None))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.searchFile), _translate("Form", "Search for a File", None))
 
         self.pbAuth.clicked.connect(self.authorize)
         self.pbOpenLink.clicked.connect(self.openLink)
+        self.pbSearch.clicked.connect(self.searchFullText)
+        self.leSearch.returnPressed.connect(self.searchFullText)
+        self.pbBrowse.clicked.connect(self.browseFiles)
+        self.pbUpload.clicked.connect(self.uploadFile)
+        self.progressBar.setMinimum(0)
+        self.progressBar.setMaximum(100)
+        self.progressBar.setValue(0)
 
     def createService(self):
         http = httplib2.Http()
         http = self.credentials.authorize(http)
         self.drive_service = build('drive', 'v2', http=http)
+
     def generateAuthData(self):
         # Run through the OAuth flow and retrieve credentials if not found in credential storage
         if(os.path.exists('user_credentials')):
@@ -218,49 +241,140 @@ class Ui_Form(QtGui.QWidget):
                                       "Driver has been successfully authorized.")
         self.gbAuth.hide()
         self.createService()
+        self.fetchList()
+        self.searchFullText()
 
     def openLink(self):
         link = str(self.leAuth.text())
         webbrowser.open(link,0,True)
 
+    def browseFiles(self):
+        # Get file path from the user
+        file_path = str(QtGui.QFileDialog.getOpenFileName())
+        self.leUpload.setText(file_path)
+        # Get file name from the path
+        file_name = os.path.basename(file_path)
+        self.leFileName.setPlaceholderText(file_name)
+
+    def uploadFile(self):
+        if self.leUpload.text()=='':
+            QtGui.QMessageBox.warning(self, "Wait a second!",
+                                      "Looks like you don't have a file to upload.")
+            return
+        self.progressBar.setValue(0)
+        file_path = str(self.leUpload.text())
+        # Get file name from the path
+        file_name = os.path.basename(file_path)
+        # Guess mime type from extension
+        mime_type = mimetypes.guess_type(file_name)
+        desc = str(self.pteDesc.toPlainText())
+        if desc == '':
+            desc = 'Uploaded using Driver...'
+        # file_size = os.path.getsize(file_path)
+        media_body = MediaFileUpload(file_path, mimetype=mime_type, chunksize = 256*1024, resumable=True)
+        title = str(self.leFileName.text())
+        if title == '':
+            title = file_name
+        body = {
+          'title': title,
+          'description': desc,
+          'mimeType': mime_type
+        }
+        request = self.drive_service.files().insert(body=body, media_body=media_body)
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                print status
+                self.progressBar.setValue(status.progress()*100)
+        self.progressBar.setValue(100)
+        QtGui.QMessageBox.information(self, "Success",
+                                      "File Upload Successful!")
+        self.fetchList()
+        self.searchFullText()
+
     def fetchList(self, folder_id = 'root', tree_parent = None):
+        if tree_parent == None:
+            self.treeFiles.clear()
         page_token = None
         while True:
-            params = {}
-            if page_token:
-                params['page_token'] = page_token
-            params['q'] = 'trashed=false' # Query String
-            request = self.drive_service.children().list(folderId = folder_id, **params)
-            response = request.execute()
-            for child in response['items']:
-                tree_item = QtGui.QTreeWidgetItem()
-                meta = self.getFileInfo(child['id'])
-                tree_item.setText(0,meta['title'])
-                # pprint.pprint(meta)
-                if 'exportLinks' in meta.keys():
-                    # Google Format
-                    pass
-                elif 'webContentLink' in meta.keys():
-                    # Binary File
-                    pass
-                else:
-                    # Folder
-                    self.fetchList(child['id'], tree_item)
-                if(tree_parent == None):
-                    self.treeFiles.addTopLevelItem(tree_item)
-                else:
-                    tree_parent.addChild(tree_item)
-            page_token = response.get('nextPageToken')
-            if not page_token:
+            try:
+                params = {}
+                if page_token:
+                    params['page_token'] = page_token
+                params['q'] = 'trashed = false' # Query String
+                request = self.drive_service.children().list(folderId = folder_id, **params)
+                response = request.execute()
+                for child in response['items']:
+                    tree_item = QtGui.QTreeWidgetItem()
+                    meta = self.getFileInfo(child['id'])
+                    tree_item.setText(0,meta['title'])
+                    # pprint.pprint(meta)
+                    if 'exportLinks' in meta.keys():
+                        # Google Format
+                        pass
+                    elif 'webContentLink' in meta.keys():
+                        # Binary File
+                        pass
+                    else:
+                        # Folder
+                        self.fetchList(child['id'], tree_item)
+                    if(tree_parent == None):
+                        self.treeFiles.addTopLevelItem(tree_item)
+                    else:
+                        tree_parent.addChild(tree_item)
+                page_token = response.get('nextPageToken')
+                if not page_token:
+                    break
+            except errors.HttpError, error:
+                QtGui.QMessageBox.warning(self, "Wait a second!",
+                                      'An error occurred: %s' % error)
                 break
+            if self.treeFiles.topLevelItemCount()==0 and tree_parent == None:
+                # Empty drive taunt.
+                QtGui.QMessageBox.information(self, "Get Started!",
+                                      'Looks like your Drive is empty. Try uploading a file.')
 
     def getFileInfo(self, file_id):
         return self.drive_service.files().get(fileId=file_id).execute()
 
-    def searchFile(self):
-        query = self.leSearch
-        self.drive_service.files()
-        # Only show files with shared==false
+    def searchFullText(self):
+        self.listResults.clear()
+        query = str(self.leSearch.text())
+        results = []
+        page_token = None
+        while True:
+            try:
+                params = {}
+                params['q'] = "fullText contains '" + query + "' and trashed = false"
+                if page_token:
+                    params['pageToken'] = page_token
+                files = self.drive_service.files().list(**params).execute()
+                results.extend(files['items'])
+                page_token = files.get('nextPageToken')
+                if not page_token:
+                    break
+            except errors.HttpError, error:
+                QtGui.QMessageBox.warning(self, "Wait a second!",
+                                      'An error occurred: %s' % error)
+                break
+        for result in results:
+            list_item = QtGui.QListWidgetItem()
+            list_item.setText(result['title'])
+            # pprint.pprint(meta)
+            if 'exportLinks' in result.keys():
+                # Google Format
+                pass
+            elif 'webContentLink' in result.keys():
+                # Binary File
+                pass
+            else:
+                # Folder
+                continue
+            if result['shared'] == True:
+                continue
+            self.listResults.addItem(list_item)
+
 
 if __name__ == "__main__":
     # sys.stderr = open(sys.argv[0][:-2]+"log", 'w') # Redirecting errors to logfile.

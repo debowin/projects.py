@@ -104,7 +104,7 @@ def upload(drive_service):
     if desc=='':
         desc = 'Uploaded using driver...'
     # Path to the file to upload
-    FILENAME = file_name
+    FILENAME = file_path
     # Insert the file
     media_body = MediaFileUpload(FILENAME, mimetype=mime_type, resumable=True)
     body = {
