@@ -65,7 +65,7 @@ def list_all(drive_service):
 
 def search_file(drive_service):
     """
-    Perform a fuzzy search(>50% match) on the user's Google Drive account.
+    Perform a fuzzy search(>50%% match) on the user's Google Drive account.
     :param drive_service - Drive API service instance:
     :return match_results - list of matching files:
     """
